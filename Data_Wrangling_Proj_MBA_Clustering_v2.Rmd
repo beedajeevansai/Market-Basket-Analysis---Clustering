@@ -1,0 +1,1012 @@
+---
+title: "Market Basket Analysis and Clustering"
+author: "Jeevan Beedareddy (M12368208), Aniket Mahapure (M12910618)"
+date: "December 9, 2018"
+output:
+  html_document: default
+  word_document: default
+---
+# {.tabset .tabset-fade}
+
+## Introduction
+One of the largest retailers in United States has setup its own Marketing Analytics division recently to run personalized campaigns. To start with, Vice President of Marketing Analytics wants to understand if certain products are often purchased together than others. Doing the same would help in shelf assortment, product bundling and increasing sales through cross-sell campaigns. Since we are in customer-centric era, VP expects to run personalized campaigns there by improving customer satisfaction as well as revenue. 
+
+Eg: Let's say in Grocery department, Veggies and Milk are bought together more often than other products. Also, there are two sets of customers similar in almost every attribute like purchase frequency, basket size and household size. The only difference is Set1 purchases Veggies and Milk whereas Set2 purchases only Veggies. Then recommending Milk to Set2 or providing certain discounts on Milk to Set2 would help in increasing overall sales. For Set1, can give similar discount on products they haven't explored till now or on overall purchase rather than providing on Milk. 
+
+### <span style="blue"> Approach to address problem </span>
+Above problem can be split in to three parts
+
+1. Part1: Understand affinity between products
+2. Part2: Understand current customer profiles
+3. Part3: Combine ouput from Part1, Part2 and generate personalized product recommendations
+
+Can leverage transactions data, customers' demohraphics data and previous marketing campaigns data for the same
+
+### <span style="color:blue"> Analytical Approach </span>
+Below is the approach for each Part defined above
+
+**1. For Part1:**
+
+  * Choose Department and Timeframe on which Market Basket Analysis will be performed. We are free to choose one Department to start with
+  * Understand typical basket sizes. There can be varied groups of customers and their purchase frequency, basket size could be different
+  * Prepare data to be required for MBA algorithm i.e. at transaction level
+  * Perform MBA using Association Rule Mining and generate set of rules with affinity for every product
+
+**2. For Part2:**
+
+ * Start with Exploratory Data Analysis to get brief understanding about customers
+ * Understand Transactional behavior of customers by slicing with demographics data
+ * Understand Campaign response behavior of customers by slicing with demographics data
+ * Perform clustering, an unsupervised machine learning technique where data points of similar characteristics would be grouped in to similar groups. 
+ * Generate profiles of clusters
+
+**3. For Part3:**
+
+  * Use outputs from Part1 and Part2 to generate personalized marketing campaigns
+  * Calculate increment in revenue by implementing this project
+
+### <span style="color:blue"> Outcomes </span>
+This could help Business in driving sales and increased customer satisfaction. Given personalized campaigns, customers would be happy and become loyal customers to retailer. Can use rules generated from Market Basket Analysis for numerous marketing strategies:
+
+* Changing the store layout according to trends
+* Customer behavior analysis
+* Catalogue design
+* Cross marketing on online stores
+* What are the trending items customers buy
+* Customized emails with add-on sales
+
+## Loading Required Packages
+```{r message = FALSE, warning = FALSE}
+library(data.table)     #For reading data and storing in form of data tables
+library(dplyr)          #For data manipulation and Exploratory Data Analysis
+library(bit64)          #Requires for reading data
+library(ggplot2)        #For good visualization of Exploratory Data Analysis
+library(arules)         #For running Market Basket Analysis through Apriori
+library(arulesViz)      #For visualizing output of Apriori
+library(cluster)        #For clustering (both k-means and hierarchical)
+library(knitr)          #For displaying output in form of tables
+library(lubridate)      #For creating quarter
+library(gridExtra)      #For plotting graphs in same window
+library(factoextra)     #For visualization of clusters
+library(purrr)          #For map function
+```
+
+
+## Data Preparation
+
+This dataset contains household level transactions over two years from a group of 2,500 households who are frequent shoppers at a retailer. It contains all of each household's purchases, not just those from a limited number of categories. For certain households, demographics information as well as direct marketing contact history are included.
+
+Data is downloaded from datasets for final project of [Data Wrangling in R course](http://uc-r.github.io/data_wrangling/final-project). Customer full journey data can be downloaded from [here](https://www.dropbox.com/sh/7g8npy9k51dhtjm/AACOwFfvFSjw26fWNDZmaSS1a?dl=1)
+
+### <span style="color:blue"> Reading data and checking for Missing values </span>
+```{r message=FALSE, error=FALSE}
+
+# Setting up work directory. Make sure there are datasets under sub-folder 
+# '\data'  working directory
+
+# Import datasets
+# Will be using fread of data.table given it's speed in reading data sets
+
+data_sets <- c('transaction_data.csv', 'product.csv', 'hh_demographic.csv',
+               'coupon_redempt.csv', 'coupon.csv', 'causal_data.csv',
+               'campaign_table.csv', 'campaign_desc.csv')
+
+for(i in seq_along(data_sets))
+{
+  file_name <- paste0('data/',data_sets[i])
+  if(file.exists(file_name))
+  {
+    df <- fread(file_name)
+    assign(sub("\\..*", "", data_sets[i]),df)
+    rm(df)
+  } else
+  {
+    print(paste(file_name,"doesn't exist"))
+  }
+}
+
+# Creating summary of data sets loaded
+
+summary_table <- 
+data.frame(
+  Data = c("transaction_data", "Product", "hh_demographic", "Coupon_redempt", 
+           "Coupon","Causal_data", "Campaign_table", "Campaign_desc"),
+  Description = c('All transactions data', 
+                  'Information on each product sold', 
+                  'Demographics information for some households', 
+                  'Coupons that each household redeemed', 
+                  'All the coupons sent to customers', 
+                  'Marketing info for products(weekly mailer,in-store display)', 
+                  'Campaigns received by each household',
+                  'Length of time for which a campaign runs'), 
+  Rows = c(dim(transaction_data)[1],dim(product)[1], dim(hh_demographic)[1], 
+           dim(coupon_redempt)[1], dim(coupon)[1], dim(causal_data)[1],
+           dim(campaign_table)[1], dim(campaign_desc)[1]),
+  Cols = c(dim(transaction_data)[2],dim(product)[2], dim(hh_demographic)[2], 
+           dim(coupon_redempt)[2], dim(coupon)[2], dim(causal_data)[2],
+           dim(campaign_table)[2], dim(campaign_desc)[2]),
+  Missing_val = c(sum(is.na(transaction_data)), sum(is.na(product)), 
+                  sum(is.na(hh_demographic)), sum(is.na(coupon_redempt)), 
+                  sum(is.na(coupon )), sum(is.na(causal_data )),
+                  sum(is.na(campaign_table )), sum(is.na(campaign_desc ))))
+
+# Creating a table of data summary
+kable(summary_table, caption = "Summary of all datasets")
+
+```
+
+Above tables gives missing values while reading file. However, there could be more missing values i.e. blank spaces, unknown values etc, but not being captured as NAs. Below section 
+counts for such cases
+
+**Missing values as empty cell **
+```{r}
+# Creating a function to calculate empty cells for each column of a dataset --
+empty_cells <- function(x){
+  empty <- function(x)
+    {
+    a  <- sum(x == "")
+  }
+# Using Apply function 
+  output <- apply(x, 2, empty)
+  return(output)
+}
+
+# Running it for product data 
+empty_cells(product)
+```
+We can see that, there are total 30652 empty cells in product dataset, majorly in curr_size_of_product column. These are missing values in product dataset which are captured as empty cells. For our analysis, we will not be using this coulmn and hence this column will be dropped in upcoming section
+
+**Missing values as None or Unknown**
+```{r}
+# Creating a function to calculate cells with unknown entries
+uk_cells <- function(x){
+  uk <- function(x)
+  {
+    a  <- sum(grepl("Unknown", x))
+  }
+# Using Apply function 
+  output <- apply(x, 2, uk)
+  return(output)
+}
+
+# Running it for demographics data 
+uk_cells(hh_demographic)
+```
+As we can see from the above output, missing values are captutred in hh_demographic dataset as **'Unknown'** or **'None-Unknown'**. We would be putting these values into a different category called **'Unknown'** instead of removing them completely because of large quantity. 
+
+### <span style="color:blue"> Checking for anomalies, outliers </span>
+**Anomaly: Positive Retail Discount** 
+```{r}
+# Calculating no. of rows with positive discounts 
+sum(transaction_data$retail_disc > 0)
+
+# Removing unwanted data 
+transaction_data <- transaction_data %>% filter(retail_disc <= 0 )
+```
+Retail discount in transaction dataset is expressed in negative sign for all entries, however there are 36 records with positive discount. This can be the result of system error while recording the transaction.
+We are removing all rows with positive discount values.
+
+
+**Anomaly: Zero product quantity** 
+```{r}
+# Checking for anomaly 
+sum(transaction_data$quantity == 0)
+```
+Quantity is the no. of products purchased in that respective transaction. There are 14466 records where quantity is zero. We can say that either these transaction_data are not valid or there is some kind of system error.
+
+**Anomaly: Outlier in Quantity** 
+```{r}
+# Checking the distribution of quantity 
+boxplot(transaction_data$quantity, main = "Boxplot of Quantity")
+
+# Quantile values 
+quantile(transaction_data$quantity, c(0.8, 0.9, 0.95, 0.98, 0.99))
+
+# Calculating no. of rows for quantity>10 
+sum(transaction_data$quantity > 10)
+
+```
+As shown in Boxplot, the distribution of quantity column is highly skewed. After examining the values for multiple quantiles, it is evident that 99% of the values are below 10. There are total 25406 records with greater than 10 as quantity.
+In order to remove these anomalies, we will remove all reacords with less than zero and greater than 10 quantity value.
+
+```{r}
+# Checking the count 
+sum(transaction_data$quantity > 10 | transaction_data$quantity < 0)
+
+# Removing unwanted rows 
+transaction_data <- transaction_data %>% filter(quantity > 0 & quantity <= 10)
+
+# Checking quantiles after cleaning 
+quantile(transaction_data$quantity, c(0.8, 0.9, 0.95, 0.98, 0.99, 1))
+```
+As a result, total 25406 rows are removed from transaction dataset.
+
+### <span style="color:blue"> Datasets preparation for Analysis </span>
+**Creating new columns: Quarter **
+```{r}
+# Creating quarter column 
+transaction_data$quarter <- quarter(as.Date(transaction_data$day - 1, origin = "2016-01-01"), with_year = TRUE)
+
+```
+We have created a new column: quarter to analyse the trend of transaction_data for each quarter.
+
+**Creating new columns: Shelf Price **
+```{r}
+# Creating shelf price column 
+transaction_data <- transaction_data %>% 
+                mutate(shelf_price = 
+                       sales_value - retail_disc - coupon_disc - coupon_match_disc)
+```
+We have created a new column: shelf_price to see actual price of product without any discount.
+
+**Selecting specific columns from datasets **
+```{r}
+# Selecting specific columns from transaction data 
+transaction_data <- transaction_data %>%
+                select(household_key, basket_id, day, product_id, quantity, 
+                       sales_value,retail_disc, trans_time, 
+                       week_no, coupon_disc,coupon_match_disc, 
+                       quarter, shelf_price)
+
+# Selecting specific columns from product data 
+product <- product %>%
+           select(product_id, department, commodity_desc,sub_commodity_desc) 
+
+```
+We have selected only those columns which are required for this analysis. 
+
+**Converting data types of columns: hh_demographic data set **
+```{r}
+# Converting categorical variables to factors 
+
+hh_demographic <- hh_demographic %>% mutate_if(is.character, factor) 
+
+# Checking the structure after conversion 
+str(hh_demographic)
+```
+We have converted all categorical variables of hh_demographic data to factors for the ease of the analysis. Description of selected datasets and columns will be provided in next section
+
+
+### <span style="color:blue"> Summary of datasets selected and their varaibles after cleaning </span>
+
+**1. Transactions data** - Data about products bought in basket, quantity, value and discount (retail as well as manufacturer), transaction time, day and week
+
+```{r}
+# Creating a data frame with column names and types
+transaction_vars <- data.frame(names(transaction_data), sapply(transaction_data, class),
+                               row.names = NULL)
+# Changing variable name of created data frame 
+colnames(transaction_vars) <- c("Variable Name", "Type")
+
+# Providing description of variables
+var_desc <-  c('Unique Identifier of household',
+               'Unique identifier of transaction',
+               'Day of transaction',
+               'Unique identifier of product',
+               'Units purchased in that transaction',
+               'Amount of Dollars received by retailer',
+               'Discount by retailer',
+               'Transaction time of the day',
+               'Week number of transaction. We have two-year worth data',
+               'Discount applied due to Manufacturer discount',
+               'Discount applied due to retailer match of manufacturer coupon',
+               'Quarter of transaction. 4 quarters per year',
+               'Actual price of product without discount')
+var_desc           <- as.data.frame(var_desc)
+colnames(var_desc) <- 'Variable Description'
+transaction_vars   <- cbind(transaction_vars, var_desc)
+
+# For summary of data
+kable(data.frame(Obs = nrow(transaction_data), Variables = ncol(transaction_data)),
+      caption = "Summary after cleaning")
+kable(transaction_vars, caption = "Summary of transaction_data data")
+```
+
+**2. Product data** - Data about product manufacturer, brand, department, category and sub category
+```{r}
+# Creating a data frame with column names 
+product_vars <- data.frame(names(product), sapply(product, class), row.names = NULL)
+# Changing variable name of created data frame 
+colnames(product_vars) <-  c("Variable Name", "Type")
+
+# Providing description of variables 
+var_desc <- c('Unique identifier of product',
+               'Department under which product is grouped',
+               'Can be considered as category of product',
+               'Can be considered as sub category of product')
+var_desc           <- as.data.frame(var_desc)
+colnames(var_desc) <- 'Variable Description'
+product_vars       <- cbind(product_vars, var_desc)
+
+# For summary of data 
+kable(data.frame(Obs = nrow(product), Variables = ncol(product)),
+      caption = "Summary after cleaning")
+kable(product_vars, caption = "Summary of Product data")
+```
+
+**3. Household** - Data about age, marital status, income, homeowner, size and kids in household
+```{r}
+# Creating a data frame with column names 
+household_vars <- data.frame(names(hh_demographic), sapply(hh_demographic,class), row.names = NULL)
+# Changing variable name of created data frame 
+colnames(household_vars) <-  c("Variable Name", "Type")
+
+# Providing description of variables 
+var_desc <- c('Unique identifier of household',
+              'Age description provided during registration of household',
+              'Marital status provided during registration of household',
+              'Income description provided during registration of household',
+              'Home owning status provided during registration of household',
+              'Household composition description provided during registration of Household',
+              'Household size description provided during registration of household',
+              'Kids decrption provided during registration of household')
+var_desc           <- as.data.frame(var_desc)
+colnames(var_desc) <- 'Description'
+household_vars     <- cbind(household_vars, var_desc)
+
+# For summary of data 
+kable(data.frame(Obs = nrow(hh_demographic), Variables = ncol(hh_demographic)),
+      caption = "Summary after cleaning")
+kable(household_vars, caption = "Summary of Household data")
+
+```
+
+**4. Campaign description** - Contains type of campaign, start and end day of campaign
+```{r}
+# Creating a data frame with column names 
+campaign_desc_vars <- data.frame(names(campaign_desc), sapply(campaign_desc,class), row.names = NULL)
+# Changing variable name of created data frame 
+colnames(campaign_desc_vars) <-   c("Variable Name", "Type")
+
+# Providing description of variables 
+var_desc <- c('Description of campaign',
+               'Unique identifier for campaign',
+               'Starting day of campaign',
+               'Ending day of campaign')
+var_desc           <- as.data.frame(var_desc)
+colnames(var_desc) <- 'Description'
+campaign_desc_vars <- cbind(campaign_desc_vars, var_desc)
+
+# For summary of data 
+
+kable(data.frame(Obs = nrow(campaign_desc), Variables = ncol(campaign_desc)),
+      caption = "Summary after cleaning")
+kable(campaign_desc_vars, caption = "Summary of Campaign Description data")
+
+```
+
+**5. Campaign_table** - contains information about campaigns under which households were targeted. A household can receive multiple coupons as a part of single campaign. Data about coupons received by household is not present
+```{r}
+# Creating a data frame with column names
+campaign_vars <- data.frame(names(campaign_table), sapply(campaign_table, class), row.names = NULL)
+# Changing variable name of created data frame 
+colnames(campaign_vars) <-   c("Variable Name", "Type")
+
+# Providing description of variables 
+var_desc <- c('Description of campaign',
+              'Unique identifier for household',
+              'Unique identifier of campaign under which a household was targeted')
+var_desc           <- as.data.frame(var_desc)
+colnames(var_desc) <- 'Description'
+campaign_vars      <- cbind(campaign_vars, var_desc)
+
+# For summary of data 
+kable(data.frame(Obs = nrow(campaign_table), Variables = ncol(campaign_table)),
+      caption = "Summary after cleaning")
+kable(campaign_vars, caption = "Summary of Campaign data")
+
+```
+
+**6. Coupon** - Contains information about coupon code, products on which coupon code can be applied and campaign under which coupon was launched. There can be multiple products eligible for discount under single coupon
+```{r}
+# Creating a data frame with column names
+coupon_vars <- data.frame(names(coupon), sapply(coupon, class), row.names = NULL)
+# Changing variable name of created data frame 
+colnames(coupon_vars) <-   c("Variable Name", "Type")
+
+# Providing description of variables 
+var_desc <- c('Unique identifier of coupon code',
+              'Products on which discount can be applied through usage of coupon',
+              'Unique identifier of campaign')
+var_desc           <- as.data.frame(var_desc)
+colnames(var_desc) <- 'Description'
+coupon_vars        <- cbind(coupon_vars, var_desc)
+
+# For summary of data 
+kable(data.frame(Obs = nrow(coupon), Variables = ncol(coupon)),
+      caption = "Summary after cleaning")
+kable(coupon_vars, caption = "Summary of Coupon data")
+
+```
+
+**7. Coupon_redempt** - Contains information about coupons being used by households
+```{r}
+# Creating a data frame with column names 
+coupon_redempt_vars <- data.frame(names(coupon_redempt), sapply(coupon_redempt, class), row.names = NULL)
+# Changing variable name of created data frame 
+colnames(coupon_redempt_vars) <- c("Variable Name", "Type")
+
+# Providing description of variables 
+var_desc <- c('Unique identifier of household',
+              'Day on which coupon was used to get discount',
+              'Unique identifier of coupon code',
+              'Unique identifier of campaign')
+var_desc            <- as.data.frame(var_desc)
+colnames(var_desc)  <- 'Description'
+coupon_redempt_vars <- cbind(coupon_redempt_vars, var_desc)
+
+# For summary of data 
+kable(data.frame(Obs = nrow(coupon_redempt), Variables = ncol(coupon_redempt)),
+      caption = "Summary after cleaning")
+kable(coupon_redempt_vars, caption = "Summary of Coupon redempt data")
+
+```
+
+##  EDA and Market Basket Analysis
+
+In this project we will be using data sets related to campaigns (campaign_desc, campaign_table, coupon and coupon_desc), transactions (transaction_data), products (product) and demographics (hh_demographic)
+
+Below is the Exploratory Data Analysis
+
+### <span style="color:blue"> EDA for Market Basket Analysis </span>
+
+ **1. To determine timeframe of analysis and department**
+
+Distribution of sales and trasactions across time
+```{r}
+# Sales by quarter
+transaction_data$quarter <- as.factor(transaction_data$quarter)
+sales_plot <- transaction_data %>% 
+              group_by(quarter) %>%
+              summarise(tot_sales = sum(sales_value)) %>%
+              ggplot(aes(x = quarter, y = tot_sales, group = 1)) +
+              geom_point() +
+              geom_line() +
+              scale_y_continuous(name = "Total Sales Value", labels = scales::dollar) +
+              labs(x = "Quarter", title = "Sales by quarter")
+
+# Number of transaction_data by quarter
+trans_plot <- transaction_data %>% 
+              group_by(quarter) %>%
+              summarise(tot_transaction_data = n_distinct(basket_id)) %>%
+              ggplot(aes(x = quarter, y = tot_transaction_data, group = 1)) +
+              geom_point() +
+              geom_line() +
+              scale_y_continuous(labels = scales::comma) +
+              labs(x = "Quarter", title = "Transactions by quarter")
+
+# Plotting above plots in one window
+grid.arrange(sales_plot, trans_plot, ncol = 1)
+
+```
+
+ **Insights** - Could see that in Quarter 1 of 2016, sales and transactions are very low. This
+could be because of data quality issues
+
+Distribution of sales across departments. We will be plotting for top 10 departments 
+and all others will classified as 'Others'
+
+```{r}
+# To identify top 10 departments by sales
+top10_depts <- transaction_data %>% 
+               inner_join(product, by = "product_id") %>%
+               group_by(department) %>%
+               summarise(tot_sales = sum(sales_value)) %>%
+               arrange(desc(tot_sales)) %>%
+               top_n(10) %>%
+               select(department)
+
+top10_depts <- as.vector(top10_depts$department)
+
+# Defining department - we will be considering top 10 by sales value and 
+# remaining all others under 'others' bucket
+product$department2 <- ifelse(product$department %in%
+                                top10_depts, product$department, 'Others')
+
+# Making a join on product and transaction table
+# Using data table for quick execution
+prod_trans <- as.data.table(transaction_data %>%
+                              inner_join(product, by = "product_id"))
+
+# Creating a table which aggregates sales by department and quarter
+sales_df <- as.data.table(prod_trans[,sum(sales_value), 
+                                     by = c("department2", "quarter")])
+
+names(sales_df)[3] <- "sales_dept"
+
+# Creating another variable sales_quarter which has sales in that quarter
+sales_df[, sales_quarter := sum(sales_dept), by = "quarter"]
+sales_df[, sales_dept_perc := (sales_dept / sales_quarter)*100,]
+
+# Plotting sales by department. Stacked bar chart
+dep_sales_plot <- sales_df %>%
+                  ggplot(aes(x = quarter, y = sales_dept, fill = factor(department2))) +
+                  geom_bar(stat = 'identity', position = "fill") + 
+                  scale_y_continuous(labels = scales::percent) + 
+                  labs(x = "Quarter", y = "Percent of sales",
+                  title = "Percent sales by department") +
+                  scale_fill_discrete(name = "Department")
+dep_sales_plot
+
+# Remove sales_df object
+rm(sales_df)
+```
+
+ **Insights** - Could see that Grocery department was contributing to 50% of sales. We will be using the same for our Market Basket Analysis.
+Time frame of our analysis would be first two quarters of 2017 given consistency in sales across those two quarters
+
+ **2.	To understand previous discount campaigns and response of the same in Grocery**
+
+```{r}
+#Creating a table which has details about campaigns run for different departments
+campaign_coupon <- coupon %>%
+                   inner_join(campaign_desc, by = "campaign") %>%
+                   inner_join(product, by = "product_id") %>%
+                   select(campaign, description, start_day, end_day, department, department2) %>%
+                   filter(department2 == "GROCERY")
+
+#For grocery department - Finding number of discount ran across months
+#Creating a column called quarter
+campaign_coupon$quarter <- as.factor(quarter(as.Date(campaign_coupon$start_day - 1, 
+                                                     origin = "2016-01-01"), with_year = TRUE))
+
+#Creating discount plot
+discount_plot <- campaign_coupon %>%
+                 group_by(quarter, description) %>%
+                 summarise(tot_campaigns = n_distinct(campaign)) %>%
+                 ggplot(aes(x = quarter, y = tot_campaigns, fill = factor(description))) +
+                 geom_bar(stat = 'identity') +
+                 labs(x = "Quarter", y = "Total Number of Campaigns",
+                 title = "Campaigns run across quarters") +
+                 scale_fill_discrete(name = "Department")
+
+discount_plot
+
+#To find number of products in discount campaigns
+prod_discount <- coupon %>%
+                 inner_join(campaign_desc, by = "campaign") %>%
+                 inner_join(product, by = "product_id") %>%
+                 select(product_id, campaign, description, start_day, 
+                 end_day, department, department2) %>%
+                 filter(department2 == "GROCERY")
+
+#For grocery department - Finding number of products on discount across quarters
+prod_discount$quarter <- as.factor(quarter(as.Date(prod_discount$start_day - 1, 
+                                                   origin = "2016-01-01"), with_year = TRUE))
+
+#Plotting number of products under discount across quarters
+prod_discount_plot <- prod_discount %>%
+                      group_by(quarter, description) %>%
+                      summarise(tot_products = n_distinct(product_id)) %>%
+                      ggplot(aes(x = quarter, y = tot_products, fill = factor(description))) +
+                      geom_bar(stat = 'identity') + 
+                      scale_y_continuous(labels = scales::comma) +
+                      labs(x = "Quarter", y = "Number of discounted products",
+                      title = "Discounted products across quarters") +
+                      scale_fill_discrete(name = "Campaign")
+
+prod_discount_plot
+
+```
+
+**Insights:** Could see that during 2017 Q4, only type B campaigns were run. Also, number of products under any of campaigns is the least in Q4 2017. This could be one of the reasons for dip in sales in Q4 2017.
+Couldn't find any campaigns during first two quarters of 2016. Indicating that campaigns might have started only during Q3 of 2016 or data might not be available for first two quarters of 2016
+
+ **3. To understand frequency distribution of basket value and units being purchased in Grocery**
+ 
+```{r warning = FALSE, message = FALSE}  
+
+# Joining product and transactions table
+prod_trans <- prod_trans %>%
+              filter(quarter %in% c('2017.1','2017.2'))
+
+# Creating histogram for sales in grocery
+sales_hist <- prod_trans %>%
+              filter(department == 'GROCERY') %>%
+              group_by(basket_id) %>%
+              summarise(tot_sales = sum(sales_value)) %>%
+              ggplot(aes(x = tot_sales)) +
+              geom_histogram() +
+              scale_y_continuous(labels = scales::comma) +
+              labs(x = "Sales Value", y = "Number of Transactions",
+              title = "Frequency distribution of sales value")
+
+sales_hist
+
+# Creating histogram for sales in quantity
+quantity_hist <- prod_trans %>%
+                 filter(department == 'GROCERY') %>%
+                 group_by(basket_id) %>%
+                 summarise(tot_quantity = sum(quantity)) %>%
+                 ggplot(aes(x = tot_quantity)) +
+                 geom_histogram() + 
+                 scale_y_continuous(labels = scales::comma) +
+                 labs(x = "Total Quantity", y = "Number of Transactions",
+                 title = "Frequency distribution of quantity")
+quantity_hist
+
+```
+
+**Insights:** Could see that both sales and quantity are right skewed. This indicates that there is a large proportion of customers who purchase less quanity and there are customers who would buy in high quanitites as well
+
+ **4. To understand top selling products in Grocery for first two quarters in 2017**
+
+```{r}
+
+# Creating a data frame filtered for Grocery department
+prod_trans4 <- prod_trans[which(prod_trans$department == 'GROCERY'),]
+
+# Creating month column
+prod_trans4$month <- as.factor(month(as.Date(prod_trans4$day - 1, origin = "2016-01-01")))
+
+# Creating a plot for sales of top 10 products in Grocery
+top10_prod_sales <- prod_trans4 %>% 
+                    group_by(sub_commodity_desc, month) %>%
+                    summarise(tot_sales = sum(sales_value)) %>%
+                    group_by(month) %>%
+                    top_n(10, wt = tot_sales) %>%
+                    ggplot(aes(x = month, y = tot_sales, fill = factor(sub_commodity_desc))) +
+                    geom_bar(stat = 'identity') + 
+                    scale_y_continuous(labels = scales::comma) +
+                    labs(x = "Month (2017)", y = "Sales Value",
+                    title = "Top Selling products in Grocery") + 
+                    scale_fill_discrete("Top 10 products")
+
+top10_prod_sales
+```
+
+**Insights:** Could see that soft drinks and milk are top selling products in almost every month
+
+### <span style="color:blue">Running Market Basket Analysis Algorithm </span>
+
+**1. Creating dataset at transaction level**
+
+```{r warning = FALSE}
+# Creating data set in transaction format
+transaction_data_bask <- plyr::ddply(prod_trans4,c("basket_id"),
+                                function(df1)paste(df1$sub_commodity_desc,
+                                                   collapse = ","))
+                                                   
+# There is no need of basket_id. Will be removing the same
+transaction_data_bask <- transaction_data_bask[,2]
+# Renaming second column
+names(transaction_data_bask) <- "prod_combinations"
+
+# Writing output in to CSV format
+write.csv(transaction_data_bask, "data/transaction_data_bask.csv", quote = FALSE,
+          row.names = TRUE)
+
+# Reading in transactions format
+basket_tr <- read.transactions("data/transaction_data_bask.csv", format = 'basket', sep = ',')
+```
+
+**2. Running Apriori Algorithm and plotting top 10 rules**
+
+```{r}
+# Running apriori algorithm
+association.rules <- apriori(basket_tr, parameter = list(supp = 0.001, conf = 0.8, maxlen = 10))
+
+# Getting top 10 sub rules
+top10subRules <- head(association.rules, n = 10, by = "confidence")
+
+# Plotting top 10 sub rules
+plot(top10subRules, method = "graph",  engine = "htmlwidget")
+```
+
+**3. Conclusions**
+
+ * **Rule 1:** If chocolate milk, eggs and cheese are being purchased in a basket, there is 97% chance of purchasing White milk
+ 
+ * **Rule 2:** If family cereal, eggs and peanut butter are being purchased in a basket, there is 95% chance of purchasing White milk
+ 
+ * **Rule 3:** IF eggs, potato chips, shredded cheese and soft drinks are being purchased, there is 94% chance of purchasing White milk
+ 
+ * Also, from other rules could see that if cereals and bread are being purchased together, there are high chances of purchasing White milk
+
+##  EDA and Clustering
+
+### <span style="color:blue">EDA for clustering</span>
+
+**1. Transaction Behaviour by Demographic Details**
+
+```{r}
+
+# Combining Transaction data with Demographics data
+trans_demo <- transaction_data %>% 
+              inner_join(hh_demographic, by = "household_key") %>% 
+              mutate(q = quarter(as.Date(day - 1, origin = "2016-01-01"))) %>%
+              filter(q <= 2)
+
+# No of Households Age Bucket Wise
+Households_Age_Buckets <- trans_demo %>% 
+                          group_by(age_desc, marital_status_code) %>% 
+                          summarise(n_house = n_distinct(household_key)) %>% 
+                          ggplot(aes(x = age_desc, y = n_house, fill = marital_status_code)) + 
+                          geom_bar(stat = "identity") +
+                          labs(title = "No. of households in Age Buckets + Marital Status",
+                               x = "Age Bucket", y = "No of households") +
+                          scale_fill_discrete("Marital Status")
+                          
+
+Households_Age_Buckets                    
+```
+ 
+ **Insights** - Majority of households are in 45-54 age category with very less no of unmarried  houlseholds 
+
+```{r}
+# ATV Age bucket wise
+ATV_Age_Buckets <-  trans_demo %>% 
+                    group_by(age_desc, marital_status_code) %>% 
+                    summarise(ATV = sum(sales_value)/n(),
+                              ACV = sum(sales_value)/n_distinct(household_key)) %>% 
+                    ggplot(aes(x = age_desc, y = ATV, fill = marital_status_code)) + 
+                    geom_bar(stat = "identity", position = "dodge") +
+                    labs(title = "Avg Transaction Value of Age Buckets across Marital Status",
+                         x = "Age Buckets", y = "ATV") +
+                    scale_y_continuous(labels = scales::dollar) +
+                    scale_fill_discrete("Marital Status")
+
+ATV_Age_Buckets
+```
+
+ **Insights** - Households with marital status as married tend to spend more in all age buckets except 25-34
+ 
+```{r}
+# Sales by Household size 
+Sales_HouseSize <-  trans_demo %>% 
+                    group_by(household_size_desc, homeowner_desc) %>% 
+                    summarise(total_sale = sum(sales_value),
+                              ATV = sum(sales_value)/n(),
+                              ACV = sum(sales_value)/n_distinct(household_key)) %>% 
+                    ggplot(aes(x = homeowner_desc, y = total_sale, fill = household_size_desc)) + 
+                    geom_bar(stat = "identity", position = "dodge") +
+                    labs(title = "Total Sales for Homeowner Type across Householdsize",
+                         x = "Homeowner Type", y = "Total Sales") +
+                    scale_y_continuous(labels = scales::dollar) +
+                    scale_fill_discrete("Household Size")
+Sales_HouseSize                    
+```
+
+**Insights** - People who are houseowner with household size = 2 are spending a lot as compared 
+to other other household size buckets
+
+
+```{r}
+# Purchance frequency
+Purchase_Frequency <- trans_demo %>% 
+                      group_by(age_desc) %>% 
+                      summarise(trans = n(),
+                                first = min(day),
+                                last = max(day),
+                                gap = last - first,
+                                freq = trans/((gap/30) * n_distinct(household_key))) %>% 
+                      ggplot(aes(x = age_desc, y = freq)) +
+                      geom_bar(stat = "identity") +
+                      labs(title = "Average Monthly Transctions per Age Bucket",
+                           x = "Age Buckets", y = "No of transaction_data")
+
+Purchase_Frequency
+```
+
+**Insights** - Houshold with age bucket 35-44 are doing the maximun no of transaction_data in a month followed by 45-54 and 35-34 age buckets 
+
+**2. Response to Campaigns by Demographic Details**
+
+```{r}
+# Response of campaigns
+
+# No of campaign sent
+N_Campaigns <-  campaign_table %>% 
+                left_join(campaign_desc, by = "campaign") %>% 
+                mutate(q = quarter(as.Date(start_day - 1, origin = "2016-01-01"))) %>%
+                filter(q <= 2) %>% 
+                group_by(household_key) %>% 
+                summarise(n_campaign = n_distinct(campaign))
+
+# No of campaigns with response
+Campaign_Response <-  coupon_redempt %>% 
+                      mutate(q = quarter(as.Date(day - 1, origin = "2016-01-01"))) %>%
+                      filter(q <= 2) %>% 
+                      group_by(household_key) %>% 
+                      summarise(n_response = n_distinct(campaign))
+# Response Rate
+Response_Rate <-  N_Campaigns %>% 
+                  left_join(Campaign_Response, by = "household_key") %>% 
+                  mutate(percent_resp = n_response/n_campaign*100)
+
+```
+
+```{r}
+# Replacing NAs
+Response_Rate[is.na(Response_Rate)] <- 0
+
+# Combining Demographic Data with Campaign Response
+Response_Demo <-  Response_Rate %>% 
+                  inner_join(hh_demographic, by = "household_key") 
+
+# Campaign Response Age bucket wise
+Response_Age <- Response_Demo %>% 
+                group_by(age_desc) %>% 
+                summarise(avg_resp = mean(percent_resp)) %>% 
+                ggplot(aes(x = age_desc, y = avg_resp)) +
+                geom_bar(stat = "identity") +
+                labs(title = "Average Response Rate for Campaigns Age Bucket Wise ",
+                     x = "Age Buckets", y = "Average Response Rate")
+
+Response_Age
+```
+
+**Insights** - Households from Age Bucket 55-64 has the highest average response rate and 19-24 age bucket has the least  average response rate for campaigns 
+
+```{r}
+#Response by Household size 
+Response_HSize <- Response_Demo %>% 
+                  group_by(household_size_desc) %>% 
+                  summarise(avg_resp = mean(percent_resp)) %>% 
+                  ggplot(aes(x = household_size_desc, y = avg_resp)) +
+                  geom_bar(stat = "identity") +
+                  labs(title = "Average Response Rate for Campaigns Household Size Wise ",
+                       x = "Household Size", y = "Average Response Rate")
+
+Response_HSize
+```
+
+**Insights** - Households with 5+ size had highest average response rate and 3 size had the least average response rate for campaigns 
+
+### <span style="color:blue">Performing clustering</span>
+
+**1. Creating dataset required for clustering**
+
+```{r}
+# Creating data frame of sales. Summarize at household level
+sales_value_df <- prod_trans %>%
+                  group_by(household_key) %>%
+                  summarise(tot_sales = sum(sales_value), 
+                  tot_quantity = sum(quantity),
+                  tot_sales_disc = sum(shelf_price) - sum(sales_value),
+                  tot_transactions = n_distinct(basket_id))
+
+# Creating data frame for sales in Grocery department 
+sales_value_groc_df <- prod_trans %>%
+                       filter(department2 == 'GROCERY') %>%
+                       group_by(household_key) %>%
+                       summarise(tot_sales_groc = sum(sales_value), 
+                       tot_quantity_groc = sum(quantity),
+                       tot_sales_disc_groc = sum(shelf_price) - sum(sales_value))
+
+# Creating campaign description table 
+camp_desc <- campaign_table %>% 
+             left_join(campaign_desc, by = "campaign") %>% 
+             mutate(q = quarter(as.Date(start_day - 1, origin = "2016-01-01"))) %>%
+             filter(q <= 2) %>% 
+             group_by(household_key) %>% 
+             summarise(n_campaign = n_distinct(campaign))
+
+# Creating coupon description table 
+coupon_desc <- coupon_redempt %>% 
+               group_by(household_key) %>% 
+               summarise(n_response = n_distinct(campaign))
+
+# Joining above two tables 
+camp_coupon <- camp_desc %>% 
+               left_join(coupon_desc, by = "household_key") %>% 
+               mutate(percent_resp = n_response/n_campaign*100)
+
+camp_coupon[is.na(camp_coupon)] <- 0
+
+# Creating tables for median days difference between transactions
+# Selecting only required columns and distinct rows
+prod_trans2 <- as.data.table(prod_trans %>%
+                               select(household_key, day, quarter) %>%
+                               distinct())
+
+# Creating column rank
+prod_trans2[, trans_rank := rank(day), by = household_key]
+
+#Creating column next_rank. Will be using for self join
+prod_trans2$next_rank <- prod_trans2$trans_rank - 1
+
+# Doing a self join on household_key and rank
+prod_trans3 <- prod_trans2 %>%
+  inner_join(prod_trans2, by = c("household_key" = "household_key",
+                                 "trans_rank" = "next_rank"))
+
+#Creating days difference column
+prod_trans3$days_diff <- prod_trans3$day.y - prod_trans3$day.x
+
+# Creating a data frame which can be used as input to clustering
+clustering_df <- prod_trans3 %>%
+                 group_by(household_key) %>%
+                 summarise(median_diff = median(days_diff)) %>%
+                 inner_join(sales_value_df, by = "household_key") %>%
+                 inner_join(sales_value_groc_df, by = "household_key") %>%
+                 left_join(camp_coupon, by = "household_key")
+```
+
+In this phase we will be concentrating majorly on continuous variables. Will be extending the same to categorical in next phase
+
+**2. Determining number of clusters**
+
+We will be using Elbow method (Total Sum of squares) and silhouette width to determine the same
+
+```{r warning=FALSE}
+# Replacing na with 0
+clustering_df[is.na(clustering_df)] <- 0
+
+# Scaling clustering_df
+clustering_df_scaled <- scale(clustering_df[,-1])
+
+# Plotting number of clusters and total of distances
+fviz_nbclust(clustering_df_scaled, kmeans, method = "wss")
+
+# Creating function for average silhouette width
+avg_sil <- function(k) {
+  km.res <- kmeans(clustering_df_scaled, centers = k, nstart = 25)
+  ss <- silhouette(km.res$cluster, dist(clustering_df_scaled))
+  mean(ss[, 3])
+}
+
+k.values <- 2:15
+
+# Extract avg silhouette for 2-15 clusters
+avg_sil_values <- map_dbl(k.values, avg_sil)
+
+# Plot silhouette width for different clusters
+plot(k.values, avg_sil_values,
+     type = "b", pch = 19, frame = FALSE, 
+     xlab = "Number of clusters K",
+     ylab = "Average Silhouettes")
+```
+
+Will be chossing number of clusters to be four
+
+**3. Running Clustering Algorithm**
+
+```{r warning=FALSE}
+
+# Run clustering with nclust = 4
+kmeans_output <- kmeans(clustering_df_scaled, centers = 4, nstart = 25)
+
+# Visualizing clustering 
+fviz_cluster(kmeans_output, clustering_df_scaled)
+
+# Compute and plot wss for k = 2 to k = 15
+clustering_df <- cbind(clustering_df, kmeans_output$cluster)
+names(clustering_df)[13] <- "cluster"
+
+# Output group by cluster
+output <- clustering_df %>%
+          group_by(cluster) %>%
+          summarise(
+            tot_cust = n(),
+            med_days_diff = median(median_diff),
+            med_tot_sales = median(tot_sales),
+            med_tot_quantity = median(tot_quantity),
+            med_tot_sales_disc = median(tot_sales_disc),
+            med_tot_transactions = median(tot_transactions),
+            med_tot_sales_groc = median(tot_sales_groc),
+            med_tot_quantity_groc = median(tot_quantity_groc)
+          )
+
+kable(output)
+```
+
+**4. Profiling and conclusions**
+
+ * **Light buyers:** From clusters obtained, could see that majority (50%) of customers with less transaction activity are being grouped under one cluster. This set also has median days difference between two subsequent transactions is almost double compared to next less frequent cluster
+ 
+ * **Normal buyers:** There are around 628 households who have decent transactions activity with median days difference to be 4 days. There are around 167 customers almost similar to Normal shopping customers with slightly high sales activity
+ 
+ * **Heavy buyers:** Around 130 customers have very high frequency of shopping with very high shopping activity. This cluster is highly loyal and would bet the best one to pick for any discount campaigns
+
+
+##  Recommendations and Next Steps
+
+ * From Market Basket Analysis, found that if Cereals and Bread are in a basket, Milk is high likely to be purchased. Could use the same for shelf assortment i.e. placing these three products in nearby shelves
+ * For customers under segments Normal buyers and Heavy buyers can offer discount on product bundle i.e. offering discount if they are to purchase Milk, Cereals and Bread together
+ * Need to design A/B testing methodology to test out above two recommendations in first phase
+ * Since this is first phase of this project, we are limiting to very few rules from market basket analysis. Based on results from A/B testing, would be extending the same to other rules as well
+
+
+### <span style="color:blue"> Machine Learning Techniques </span>
+Used [Market Basket Analyis](https://datascienceplus.com/a-gentle-introduction-on-market-basket-analysis%E2%80%8A-%E2%80%8Aassociation-rules/) based on Apriori algorithm and [K-Means Clustering](https://www.r-bloggers.com/k-means-clustering-in-r/), an unsupervised machine learning algorithm.
